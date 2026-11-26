@@ -1,0 +1,14 @@
+[project]
+name = "open-quant"
+version = "0.1.0"
+description = "Prop firm lifecycle simulation and EV analysis"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v"
