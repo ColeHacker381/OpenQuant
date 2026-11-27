@@ -20,6 +20,26 @@ class Ruleset:
     live: LiveRules | None = None
     max_accounts: int | None = None
 
+    def validate(self):
+
+        from .validation import validate_ruleset
+        return validate_ruleset(self)
+
+    def validate_for_simulation(self, mode=None):
+
+        from .validation import (
+            SimulationMode,
+            validate_simulation_readiness
+        )
+
+        if mode is None:
+            mode = SimulationMode.FULL_LIFECYCLE
+
+        return validate_simulation_readiness(
+            self,
+            mode
+        )
+
 
 @dataclass(frozen=True)
 class DrawdownRules:

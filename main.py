@@ -14,6 +14,36 @@ from openquant.propfirm.ruleset import (
     LiveRules
 )
 
+def test_invalid_configuration():
+
+    ruleset = Ruleset(
+        account_name="",
+        account_size=-25_000,
+
+        evaluation=EvaluationRules(
+            profit_target=-1500,
+
+            drawdown=DrawdownRules(
+                type=DrawdownType.STATIC,
+                amount=-1000
+            ),
+
+            fees=FeeRules(
+                purchase=-100,
+                recurring=50
+            ),
+
+            minimum_trading_days=10,
+            maximum_trading_days=5
+        )
+    )
+
+    result = ruleset.validate()
+
+    print(result)
+    print(f"\nValid: {result.is_valid}")
+    print(f"Errors: {len(result.errors)}")
+
 
 def main():
 
@@ -128,6 +158,12 @@ def main():
         f"Maximum Accounts: "
         f"{firm.ruleset.max_accounts}"
     )
+
+    test_invalid_configuration()
+
+    print(firm.ruleset.validate())
+
+    print(firm.ruleset.validate_for_simulation())
 
 
 if __name__ == "__main__":
