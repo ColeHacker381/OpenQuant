@@ -14,6 +14,12 @@ from openquant.propfirm.ruleset import (
     LiveRules
 )
 
+from openquant.propfirm.database import (
+    FirmDatabase,
+    FirmAlreadyExistsError,
+    generate_firm_id
+)
+
 def test_invalid_configuration():
 
     ruleset = Ruleset(
@@ -127,71 +133,57 @@ def main():
         ruleset=ruleset
     )
 
-    from pathlib import Path
+    database = FirmDatabase("data/firms")
 
-    path = Path("data/firms/example_flex_25k.json")
+    firm_id = generate_firm_id(firm)
 
-    if not path.exists():
+    try:
 
-        firm.save(path)
+        database.add(firm)
 
-        print(f"Saved firm to {path}")
+        print(f"Added: {firm_id}")
 
-    loaded_firm = PropFirm.load(path)
+    except FirmAlreadyExistsError:
 
-    print("\nLoaded firm:")
-    print(loaded_firm)
+        print(f"Already exists: {firm_id}")
 
-    print("\nLoaded ruleset:")
-    print(loaded_firm.ruleset)
 
-    print("\nValidation:")
-    print(loaded_firm.validate())
+    print("\nDATABASE CONTENTS")
+    print("-" * 50)
 
-    print("\nRound-trip equality:")
-    print(firm == loaded_firm)
+    for saved_id, saved_firm in database.load_all().items():
 
-    print("\nObject identity:")
-    print(firm is loaded_firm)
+        print(f"ID: {saved_id}")
+        print(f"Firm: {saved_firm.name}")
 
-    print(firm)
+        print(
+            f"Account: "
+            f"{saved_firm.ruleset.account_name}"
+        )
 
-    print(
-        f"Account Size: "
-        f"${firm.ruleset.account_size:,}"
-    )
+        print(
+            f"Size: "
+            f"${saved_firm.ruleset.account_size:,}"
+        )
 
-    print(
-        f"Evaluation Target: "
-        f"${firm.ruleset.evaluation.profit_target:,}"
-    )
+        print(
+            "Configuration ready: "
+            f"{saved_firm.ruleset.validate_for_simulation().is_valid}"
+        )
 
-    print(
-        f"Evaluation Cost: "
-        f"${firm.ruleset.evaluation.fees.purchase:,}"
-    )
+        print("-" * 50)
 
-    print(
-        f"Funded Profit Split: "
-        f"{firm.ruleset.funded.payout.profit_split:.0%}"
-    )
 
-    print(
-        f"Maximum Payout: "
-        f"${firm.ruleset.funded.payout.maximum_amount:,}"
-    )
+    print(f"Total accounts: {len(database)}")
 
-    print(
-        f"Maximum Accounts: "
-        f"{firm.ruleset.max_accounts}"
-    )
 
-    test_invalid_configuration()
+    print("\nSEARCH RESULTS")
 
-    print(firm.ruleset.validate())
+    for saved_id, saved_firm in database.search(
+        "flex"
+    ).items():
 
-    print(firm.ruleset.validate_for_simulation())
-
+        print(f"{saved_id}: {saved_firm}")
 
 if __name__ == "__main__":
     main()
