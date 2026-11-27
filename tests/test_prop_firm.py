@@ -2,8 +2,8 @@ import pytest
 
 from dataclasses import FrozenInstanceError
 
-from propfirm.prop_firm import PropFirm
-from propfirm.ruleset import Ruleset
+from openquant.propfirm.prop_firm import PropFirm
+from openquant.propfirm.ruleset import Ruleset
 
 
 def test_create_ruleset():
