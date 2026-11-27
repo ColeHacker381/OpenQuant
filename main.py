@@ -127,6 +127,33 @@ def main():
         ruleset=ruleset
     )
 
+    from pathlib import Path
+
+    path = Path("data/firms/example_flex_25k.json")
+
+    if not path.exists():
+
+        firm.save(path)
+
+        print(f"Saved firm to {path}")
+
+    loaded_firm = PropFirm.load(path)
+
+    print("\nLoaded firm:")
+    print(loaded_firm)
+
+    print("\nLoaded ruleset:")
+    print(loaded_firm.ruleset)
+
+    print("\nValidation:")
+    print(loaded_firm.validate())
+
+    print("\nRound-trip equality:")
+    print(firm == loaded_firm)
+
+    print("\nObject identity:")
+    print(firm is loaded_firm)
+
     print(firm)
 
     print(

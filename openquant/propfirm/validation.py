@@ -1,8 +1,14 @@
-import pytest
+from dataclasses import dataclass, field, fields, is_dataclass
+import math
+from types import UnionType
+from typing import (
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints
+)
 
-from dataclasses import replace
-
-from openquant.propfirm.ruleset import (
+from .ruleset import (
     Ruleset,
     DrawdownType,
     DrawdownRules,
@@ -18,972 +24,733 @@ from openquant.propfirm.ruleset import (
     TransitionType
 )
 
-from openquant.propfirm.validation import (
-    ValidationIssue,
-    ValidationResult,
-    SimulationMode,
-    validate_ruleset,
-    validate_simulation_readiness
-)
+from enum import Enum
 
+class SimulationMode(str, Enum):
+    EVALUATION_ONLY = "evaluation_only"
+    FUNDED_ONLY = "funded_only"
+    FULL_LIFECYCLE = "full_lifecycle"
 
-# --------------------------------------------------
-# Fixtures and helpers
-# --------------------------------------------------
+@dataclass(frozen=True)
+class ValidationIssue:
+    path: str
+    message: str
 
-@pytest.fixture
-def ruleset():
+    def __str__(self) -> str:
+        return f"{self.path}: {self.message}"
 
-    evaluation = EvaluationRules(
-        profit_target=1500,
-        drawdown=DrawdownRules(
-            DrawdownType.TRAILING_EOD,
-            1000
-        ),
-        fees=FeeRules(purchase=100),
-        minimum_trading_days=3
+@dataclass(frozen=True)
+class ValidationResult:
+    errors: list[ValidationIssue] = field(
+        default_factory=list
     )
 
-    funded = FundedRules(
-        drawdown=DrawdownRules(
-            DrawdownType.TRAILING_EOD,
-            1000
-        ),
-        fees=FeeRules(activation=50),
-        payout=PayoutRules(
-            profit_split=0.90,
-            minimum_amount=250,
-            maximum_amount=1000
-        ),
-        live_transition=LiveTransitionRules(
-            minimum_payout_count=5
+    warnings: list[ValidationIssue] = field(
+        default_factory=list
+    )
+
+    @property
+    def is_valid(self) -> bool:
+        return not self.errors
+
+    def add_error(self, path: str, message: str):
+        self.errors.append(
+            ValidationIssue(path, message)
         )
+
+    def add_warning(self, path: str, message: str):
+        self.warnings.append(
+            ValidationIssue(path, message)
+        )
+
+    def __str__(self) -> str:
+        lines = [
+            "Configuration valid"
+            if self.is_valid
+            else "Configuration invalid"
+        ]
+
+        for error in self.errors:
+            lines.append(f"ERROR: {error}")
+
+        for warning in self.warnings:
+            lines.append(f"WARNING: {warning}")
+
+        return "\n".join(lines)
+
+def matches_type(value, expected_type) -> bool:
+
+    origin = get_origin(expected_type)
+
+    #handle unions such as float | None
+    if origin in (Union, UnionType):
+        return any(
+            matches_type(value, option)
+            for option in get_args(expected_type)
+        )
+
+    if expected_type is type(None):
+        return value is None
+
+    if expected_type is float:
+        return type(value) in (int, float)
+
+    if expected_type is int:
+        return type(value) is int
+
+    if expected_type is bool:
+        return type(value) is bool
+
+    return isinstance(value, expected_type)
+
+def validate_structure(
+    obj,
+    result: ValidationResult,
+    path: str = ""
+) -> None:
+
+    if not is_dataclass(obj) or isinstance(obj, type):
+        result.add_error(
+            path or "root",
+            "Expected a dataclass instance"
+        )
+        return
+
+    hints = get_type_hints(type(obj))
+    for config_field in fields(obj):
+
+        name = config_field.name
+        value = getattr(obj, name)
+        expected_type = hints[name]
+        field_path = f"{path}.{name}" if path else name
+
+        if not matches_type(value, expected_type):
+            result.add_error(
+                field_path,
+                (
+                    f"Expected {expected_type}"
+                    f"recieved {type(value).__name__}"
+                )
+            )
+
+            continue
+
+        if value is None:
+            continue
+
+        if type(value) is float:
+            if not math.isfinite(value):
+                result.add_error(
+                    field_path,
+                    "Must be a finite number"
+                )
+
+                continue
+
+        #recursively check value if dataclass
+        if is_dataclass(value):
+            validate_structure(
+                value,
+                result,
+                field_path
+            )
+
+def check_positive(
+    value,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    if value is not None and value <= 0:
+        result.add_error(
+            path,
+            "Must be greater than zero"
+        )
+
+def check_nonnegative(
+    value,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    if value is not None and value < 0:
+        result.add_error(
+            path,
+            "Must be greater than or equal to zero"
+        )
+
+def check_ratio(
+    value,
+    path: str,
+    result: ValidationResult,
+    allow_zero: bool = False
+) -> None:
+
+    if value is None:
+        return
+
+    minimum_valid = (
+        value >= 0
+        if allow_zero
+        else value > 0
     )
 
-    live = LiveRules(
-        drawdown=DrawdownRules(
-            DrawdownType.STATIC,
-            2000
-        ),
-        fees=FeeRules(),
-        payout=PayoutRules(
-            profit_split=0.90,
-            minimum_amount=100
-        ),
-        starting_balance=25_000
+    if not minimum_valid or value > 1:
+        result.add_error(
+            path,
+            (
+                "Must be between 0 and 1 inclusive"
+                if allow_zero
+                else "Must be greater than 0 and at most 1"
+            )
+        )
+
+def check_range(
+    minimum,
+    maximum,
+    path: str,
+    result: ValidationResult
+) -> None:
+    
+    if minimum is None or maximum is None:
+        return
+    if minimum > maximum:
+        result.add_error(
+            path,
+            "Maximum cannot be less than minimum"
+        )
+
+def validate_drawdown(
+    rules: DrawdownRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+    check_positive(
+        rules.amount,
+        f"{path}.amount",
+        result
     )
 
-    return Ruleset(
-        account_name="Flex 25K",
-        account_size=25_000,
-        evaluation=evaluation,
-        funded=funded,
-        live=live,
-        max_accounts=20
+    if rules.type is DrawdownType.STATIC:
+        if rules.trailing_stop_balance is not None:
+            result.add_error(
+                f"{path}.trailing_stop_balance",
+                "Static drawdown cannot have a trailing cap"
+            )
+
+def validate_fees(
+    rules: FeeRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    for name in (
+        "purchase",
+        "activation",
+        "recurring",
+        "reset"
+    ):
+        check_nonnegative(
+            getattr(rules, name),
+            f"{path}.{name}",
+            result
+        )
+
+    check_positive(
+        rules.recurring_interval_days,
+        f"{path}.recurring_interval_days",
+        result
+    )
+
+    if rules.recurring > 0:
+        if rules.recurring_interval_days is None:
+            result.add_error(
+                f"{path}.recurring_interval_days",
+                "Required when recurring fees are enabled"
+            )
+
+def validate_daily_loss(
+        rules: DailyLossRules,
+        path: str,
+        result: ValidationResult
+) -> None:
+
+    check_positive(
+        rules.amount,
+        f"{path}.amount",
+        result
+    )
+
+def validate_consistency(
+    rules: ConsistencyRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    check_ratio(
+        rules.maximum_ratio,
+        f"{path}.maximum_ratio",
+        result
+    )
+
+def validate_trading(
+        rules: TradingRules,
+        path: str,
+        result: ValidationResult
+) -> None:
+
+    check_nonnegative(
+        rules.max_mini_contracts,
+        f"{path}.max_mini_contracts",
+        result
+    )
+
+    check_nonnegative(
+        rules.max_micro_contracts,
+        f"{path}.max_micro_contracts",
+        result
+    )
+
+    if (
+        rules.max_mini_contracts == 0
+        and rules.max_micro_contracts == 0
+    ):
+        result.add_warning(
+            path,
+            "Both contract limits are zero"
+        )
+
+def validate_payout(
+    rules: PayoutRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    check_ratio(
+        rules.profit_split,
+        f"{path}.profit_split",
+        result,
+        allow_zero=True
+    )
+
+    check_positive(
+        rules.minimum_amount,
+        f"{path}.minimum_amount",
+        result
+    )
+
+    check_positive(
+        rules.maximum_amount,
+        f"{path}.maximum_amount",
+        result
+    )
+
+    check_range(
+        rules.minimum_amount,
+        rules.maximum_amount,
+        f"{path}.maximum_amount",
+        result
+    )
+
+    for name in (
+        "minimum_profitable_days",
+        "profitable_day_threshold",
+        "minimum_trading_days",
+        "minimum_days_between_payouts"
+    ):
+
+        check_nonnegative(
+            getattr(rules, name),
+            f"{path}.{name}",
+            result
+        )
+
+    check_ratio(
+        rules.maximum_withdrawal_ratio,
+        f"{path}.maximum_withdrawal_ratio",
+        result
+    )
+
+    check_positive(
+        rules.maximum_total_payouts,
+        f"{path}.maximum_total_payouts",
+        result
+    )
+
+    check_positive(
+        rules.maximum_payout_count,
+        f"{path}.maximum_payout_count",
+        result
+    )
+
+    check_range(
+        rules.minimum_amount,
+        rules.maximum_total_payouts,
+        f"{path}.maximum_total_payouts",
+        result
+    )
+
+    if rules.consistency is not None:
+
+        validate_consistency(
+            rules.consistency,
+            f"{path}.consistency",
+            result
+        )
+
+    if rules.profit_split == 0:
+
+        result.add_warning(
+            f"{path}.profit_split",
+            "Trader receives no payout revenue"
+        )
+
+def validate_transition(
+    rules: LiveTransitionRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    requirements = (
+        "minimum_payout_count",
+        "minimum_total_payouts",
+        "minimum_trading_days",
+        "minimum_profit"
+    )
+
+    for name in requirements:
+        check_positive(
+            getattr(rules, name),
+            f"{path}.{name}",
+            result
+        )
+
+    if rules.transition_type is TransitionType.AUTOMATIC:
+        if all(
+            getattr(rules, name) is None
+            for name in requirements
+        ):
+            result.add_error(
+                path,
+                "Automatic transition requires at least one condition"
+            )
+
+    if rules.transition_type is TransitionType.MANUAL_REVIEW:
+        result.add_warning(
+            path,
+            "Live transition depends on discretionary review"
+        )
+
+def validate_common_stage(
+    rules: EvaluationRules | FundedRules | LiveRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    if rules.drawdown is not None:
+
+        validate_drawdown(
+            rules.drawdown,
+            f"{path}.drawdown",
+            result
+        )
+
+    validate_fees(
+        rules.fees,
+        f"{path}.fees",
+        result
+    )
+
+    if rules.daily_loss is not None:
+
+        validate_daily_loss(
+            rules.daily_loss,
+            f"{path}.daily_loss",
+            result
+        )
+
+    if rules.consistency is not None:
+
+        validate_consistency(
+            rules.consistency,
+            f"{path}.consistency",
+            result
+        )
+
+    if rules.trading is not None:
+
+        validate_trading(
+            rules.trading,
+            f"{path}.trading",
+            result
+        )
+
+def validate_evaluation(
+    rules: EvaluationRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    validate_common_stage(
+        rules,
+        path,
+        result
+    )
+
+    check_positive(
+        rules.profit_target,
+        f"{path}.profit_target",
+        result
+    )
+
+    check_nonnegative(
+        rules.minimum_trading_days,
+        f"{path}.minimum_trading_days",
+        result
+    )
+
+    check_positive(
+        rules.maximum_trading_days,
+        f"{path}.maximum_trading_days",
+        result
+    )
+
+    check_positive(
+        rules.maximum_calendar_days,
+        f"{path}.maximum_calendar_days",
+        result
+    )
+
+    check_range(
+        rules.minimum_trading_days,
+        rules.maximum_trading_days,
+        f"{path}.maximum_trading_days",
+        result
+    )
+
+    check_range(
+        rules.minimum_trading_days,
+        rules.maximum_calendar_days,
+        f"{path}.maximum_calendar_days",
+        result
+    )
+
+def validate_funded(
+    rules: FundedRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    validate_common_stage(
+        rules,
+        path,
+        result
+    )
+
+    validate_payout(
+        rules.payout,
+        f"{path}.payout",
+        result
+    )
+
+    if rules.live_transition is not None:
+
+        validate_transition(
+            rules.live_transition,
+            f"{path}.live_transition",
+            result
+        )
+
+
+def validate_live(
+    rules: LiveRules,
+    path: str,
+    result: ValidationResult
+) -> None:
+
+    validate_common_stage(
+        rules,
+        path,
+        result
+    )
+
+    validate_payout(
+        rules.payout,
+        f"{path}.payout",
+        result
+    )
+
+    check_positive(
+        rules.starting_balance,
+        f"{path}.starting_balance",
+        result
     )
 
 
-def error_paths(result):
-
-    return {
-        error.path
-        for error in result.errors
-    }
-
-
-def warning_paths(result):
-
-    return {
-        warning.path
-        for warning in result.warnings
-    }
-
-
-# --------------------------------------------------
-# Validation result objects
-# --------------------------------------------------
-
-def test_validation_issue_string():
-
-    issue = ValidationIssue(
-        "evaluation.profit_target",
-        "Invalid target"
-    )
-
-    assert str(issue) == (
-        "evaluation.profit_target: Invalid target"
-    )
-
-
-def test_empty_validation_result():
+def validate_ruleset(
+    ruleset: Ruleset
+) -> ValidationResult:
 
     result = ValidationResult()
+    if not isinstance(ruleset, Ruleset):
 
-    assert result.is_valid
-    assert not result.errors
-    assert not result.warnings
+        result.add_error(
+            "root",
+            "Expected a Ruleset instance"
+        )
 
+        return result
 
-def test_result_add_error():
+    # Level 1: structural validation
+    validate_structure(ruleset, result)
+    if not result.is_valid:
+        return result
 
-    result = ValidationResult()
+    # Level 2: semantic validation
 
-    result.add_error("test", "Invalid value")
+    if not ruleset.account_name.strip():
+        result.add_error(
+            "account_name",
+            "Account name cannot be empty"
+        )
 
-    assert not result.is_valid
-    assert len(result.errors) == 1
+    check_positive(
+        ruleset.account_size,
+        "account_size",
+        result
+    )
 
+    check_positive(
+        ruleset.max_accounts,
+        "max_accounts",
+        result
+    )
 
-def test_result_add_warning():
+    if ruleset.evaluation is not None:
 
-    result = ValidationResult()
+        validate_evaluation(
+            ruleset.evaluation,
+            "evaluation",
+            result
+        )
 
-    result.add_warning("test", "Unusual value")
+    if ruleset.funded is not None:
 
-    assert result.is_valid
-    assert len(result.warnings) == 1
+        validate_funded(
+            ruleset.funded,
+            "funded",
+            result
+        )
 
+    if ruleset.live is not None:
 
-def test_results_are_independent():
+        validate_live(
+            ruleset.live,
+            "live",
+            result
+        )
 
-    first = ValidationResult()
-    second = ValidationResult()
+    return result
 
-    first.add_error("test", "Invalid")
-
-    assert not first.is_valid
-    assert second.is_valid
-
-
-# --------------------------------------------------
-# Valid configurations
-# --------------------------------------------------
-
-def test_valid_ruleset(ruleset):
+def validate_simulation_readiness(
+    ruleset: Ruleset,
+    mode: SimulationMode = SimulationMode.FULL_LIFECYCLE
+) -> ValidationResult:
 
     result = validate_ruleset(ruleset)
 
-    assert result.is_valid
-    assert not result.errors
+    if not result.is_valid:
+        return result
 
+    if not isinstance(mode, SimulationMode):
 
-def test_ruleset_validate_method(ruleset):
-
-    assert ruleset.validate().is_valid
-
-
-def test_ruleset_readiness_method(ruleset):
-
-    assert ruleset.validate_for_simulation().is_valid
-
-
-# --------------------------------------------------
-# Structural validation
-# --------------------------------------------------
-
-def test_invalid_root_object():
-
-    result = validate_ruleset({})
-
-    assert not result.is_valid
-    assert "root" in error_paths(result)
-
-
-def test_invalid_account_name_type(ruleset):
-
-    invalid = replace(
-        ruleset,
-        account_name=123
-    )
-
-    result = invalid.validate()
-
-    assert not result.is_valid
-    assert "account_name" in error_paths(result)
-
-
-def test_invalid_account_size_type(ruleset):
-
-    invalid = replace(
-        ruleset,
-        account_size="25000"
-    )
-
-    result = invalid.validate()
-
-    assert not result.is_valid
-    assert "account_size" in error_paths(result)
-
-
-def test_boolean_not_integer(ruleset):
-
-    invalid = replace(
-        ruleset,
-        account_size=True
-    )
-
-    assert not invalid.validate().is_valid
-
-
-def test_boolean_not_float(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            profit_target=True
+        result.add_error(
+            "simulation.mode",
+            "Invalid simulation mode"
         )
-    )
 
-    result = invalid.validate()
+        return result
 
-    assert (
-        "evaluation.profit_target"
-        in error_paths(result)
-    )
+    if mode is SimulationMode.EVALUATION_ONLY:
 
+        if ruleset.evaluation is None:
 
-def test_invalid_nested_object(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation={}
-    )
-
-    result = invalid.validate()
-
-    assert "evaluation" in error_paths(result)
-
-
-def test_invalid_enum_type(ruleset):
-
-    drawdown = replace(
-        ruleset.evaluation.drawdown,
-        type="static"
-    )
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            drawdown=drawdown
-        )
-    )
-
-    result = invalid.validate()
-
-    assert (
-        "evaluation.drawdown.type"
-        in error_paths(result)
-    )
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        float("nan"),
-        float("inf"),
-        float("-inf")
-    ]
-)
-def test_nonfinite_values(ruleset, value):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            profit_target=value
-        )
-    )
-
-    result = invalid.validate()
-
-    assert not result.is_valid
-
-    assert (
-        "evaluation.profit_target"
-        in error_paths(result)
-    )
-
-
-# --------------------------------------------------
-# Root semantic validation
-# --------------------------------------------------
-
-@pytest.mark.parametrize(
-    "name",
-    ["", " ", "   "]
-)
-def test_empty_account_name(ruleset, name):
-
-    result = replace(
-        ruleset,
-        account_name=name
-    ).validate()
-
-    assert "account_name" in error_paths(result)
-
-
-@pytest.mark.parametrize(
-    "size",
-    [0, -1000]
-)
-def test_invalid_account_size(ruleset, size):
-
-    result = replace(
-        ruleset,
-        account_size=size
-    ).validate()
-
-    assert "account_size" in error_paths(result)
-
-
-def test_invalid_max_accounts(ruleset):
-
-    result = replace(
-        ruleset,
-        max_accounts=0
-    ).validate()
-
-    assert "max_accounts" in error_paths(result)
-
-
-# --------------------------------------------------
-# Fundamental rule validation
-# --------------------------------------------------
-
-def test_invalid_drawdown(ruleset):
-
-    drawdown = replace(
-        ruleset.evaluation.drawdown,
-        amount=-1000
-    )
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            drawdown=drawdown
-        )
-    )
-
-    assert (
-        "evaluation.drawdown.amount"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_static_drawdown_with_cap(ruleset):
-
-    drawdown = DrawdownRules(
-        type=DrawdownType.STATIC,
-        amount=1000,
-        trailing_stop_balance=25000
-    )
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            drawdown=drawdown
-        )
-    )
-
-    assert (
-        "evaluation.drawdown.trailing_stop_balance"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_negative_fee(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            fees=FeeRules(purchase=-100)
-        )
-    )
-
-    assert (
-        "evaluation.fees.purchase"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_missing_recurring_interval(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            fees=FeeRules(recurring=100)
-        )
-    )
-
-    assert (
-        "evaluation.fees.recurring_interval_days"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_recurring_interval(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            fees=FeeRules(
-                recurring=100,
-                recurring_interval_days=0
+            result.add_error(
+                "evaluation",
+                "Evaluation configuration is required"
             )
-        )
-    )
 
-    assert (
-        "evaluation.fees.recurring_interval_days"
-        in error_paths(invalid.validate())
-    )
+    elif mode is SimulationMode.FUNDED_ONLY:
 
+        if ruleset.funded is None:
 
-def test_invalid_daily_loss(ruleset):
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            daily_loss=DailyLossRules(-500)
-        )
-    )
-
-    assert (
-        "funded.daily_loss.amount"
-        in error_paths(invalid.validate())
-    )
-
-
-@pytest.mark.parametrize(
-    "ratio",
-    [-0.5, 0, 1.5]
-)
-def test_invalid_consistency(ruleset, ratio):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            consistency=ConsistencyRules(ratio)
-        )
-    )
-
-    assert (
-        "evaluation.consistency.maximum_ratio"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_contract_limit(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            trading=TradingRules(
-                max_micro_contracts=-1
+            result.add_error(
+                "funded",
+                "Funded configuration is required"
             )
-        )
-    )
 
-    assert (
-        "evaluation.trading.max_micro_contracts"
-        in error_paths(invalid.validate())
-    )
+    elif mode is SimulationMode.FULL_LIFECYCLE:
 
+        if (
+            ruleset.evaluation is None
+            and ruleset.funded is None
+            and ruleset.live is None
+        ):
 
-def test_zero_contract_warning(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            trading=TradingRules(
-                max_mini_contracts=0,
-                max_micro_contracts=0
+            result.add_error(
+                "stages",
+                "At least one account stage is required"
             )
-        )
-    )
 
-    result = invalid.validate()
+        if (
+            ruleset.evaluation is not None
+            and ruleset.funded is None
+        ):
 
-    assert result.is_valid
-
-    assert (
-        "evaluation.trading"
-        in warning_paths(result)
-    )
-
-
-# --------------------------------------------------
-# Payout validation
-# --------------------------------------------------
-
-@pytest.mark.parametrize(
-    "split",
-    [-0.1, 1.1]
-)
-def test_invalid_profit_split(ruleset, split):
-
-    payout = replace(
-        ruleset.funded.payout,
-        profit_split=split
-    )
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            payout=payout
-        )
-    )
-
-    assert (
-        "funded.payout.profit_split"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_payout_range(ruleset):
-
-    payout = replace(
-        ruleset.funded.payout,
-        minimum_amount=2000,
-        maximum_amount=1000
-    )
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            payout=payout
-        )
-    )
-
-    assert (
-        "funded.payout.maximum_amount"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_lifetime_payout_limit(ruleset):
-
-    payout = replace(
-        ruleset.funded.payout,
-        maximum_total_payouts=100
-    )
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            payout=payout
-        )
-    )
-
-    assert (
-        "funded.payout.maximum_total_payouts"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_withdrawal_ratio(ruleset):
-
-    payout = replace(
-        ruleset.funded.payout,
-        maximum_withdrawal_ratio=1.5
-    )
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            payout=payout
-        )
-    )
-
-    assert (
-        "funded.payout.maximum_withdrawal_ratio"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_nested_payout_consistency(ruleset):
-
-    payout = replace(
-        ruleset.funded.payout,
-        consistency=ConsistencyRules(2.0)
-    )
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            payout=payout
-        )
-    )
-
-    assert (
-        "funded.payout.consistency.maximum_ratio"
-        in error_paths(invalid.validate())
-    )
-
-
-# --------------------------------------------------
-# Evaluation validation
-# --------------------------------------------------
-
-def test_invalid_profit_target(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            profit_target=0
-        )
-    )
-
-    assert (
-        "evaluation.profit_target"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_trading_day_range(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            minimum_trading_days=10,
-            maximum_trading_days=5
-        )
-    )
-
-    assert (
-        "evaluation.maximum_trading_days"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_invalid_calendar_day_range(ruleset):
-
-    invalid = replace(
-        ruleset,
-        evaluation=replace(
-            ruleset.evaluation,
-            minimum_trading_days=10,
-            maximum_calendar_days=5
-        )
-    )
-
-    assert (
-        "evaluation.maximum_calendar_days"
-        in error_paths(invalid.validate())
-    )
-
-
-# --------------------------------------------------
-# Transition validation
-# --------------------------------------------------
-
-def test_empty_automatic_transition(ruleset):
-
-    invalid = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            live_transition=LiveTransitionRules()
-        )
-    )
-
-    assert (
-        "funded.live_transition"
-        in error_paths(invalid.validate())
-    )
-
-
-def test_manual_transition_warning(ruleset):
-
-    config = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            live_transition=LiveTransitionRules(
-                transition_type=TransitionType.MANUAL_REVIEW
+            result.add_error(
+                "funded",
+                "Funded configuration is required after evaluation"
             )
-        )
-    )
 
-    result = config.validate()
+        if ruleset.funded is not None:
 
-    assert result.is_valid
+            transition = ruleset.funded.live_transition
 
-    assert (
-        "funded.live_transition"
-        in warning_paths(result)
-    )
+            if transition is not None:
 
+                if ruleset.live is None:
 
-# --------------------------------------------------
-# Simulation readiness
-# --------------------------------------------------
+                    result.add_error(
+                        "live",
+                        "Live configuration is required for transition"
+                    )
 
-def test_complete_lifecycle_ready(ruleset):
+                if (
+                    transition.transition_type
+                    is TransitionType.MANUAL_REVIEW
+                ):
 
-    result = validate_simulation_readiness(
-        ruleset
-    )
+                    result.add_error(
+                        "funded.live_transition",
+                        "Manual review requires a simulation outcome model"
+                    )
 
-    assert result.is_valid
+            elif ruleset.live is not None:
 
+                result.add_error(
+                    "funded.live_transition",
+                    "Transition conditions are required to reach live"
+                )
 
-def test_empty_ruleset_not_ready():
+        if ruleset.live is not None:
 
-    config = Ruleset("Empty", 25_000)
+            if ruleset.live.starting_balance is None:
 
-    assert config.validate().is_valid
+                result.add_error(
+                    "live.starting_balance",
+                    "Initial live balance must be configured"
+                )
 
-    result = config.validate_for_simulation()
+    return result
 
-    assert not result.is_valid
-    assert "stages" in error_paths(result)
 
-
-def test_evaluation_only_ready(ruleset):
-
-    config = replace(
-        ruleset,
-        funded=None,
-        live=None
-    )
-
-    result = config.validate_for_simulation(
-        SimulationMode.EVALUATION_ONLY
-    )
-
-    assert result.is_valid
-
-
-def test_evaluation_only_not_full_ready(ruleset):
-
-    config = replace(
-        ruleset,
-        funded=None,
-        live=None
-    )
-
-    result = config.validate_for_simulation()
-
-    assert "funded" in error_paths(result)
-
-
-def test_missing_evaluation(ruleset):
-
-    config = replace(
-        ruleset,
-        evaluation=None
-    )
-
-    result = config.validate_for_simulation(
-        SimulationMode.EVALUATION_ONLY
-    )
-
-    assert "evaluation" in error_paths(result)
-
-
-def test_missing_funded(ruleset):
-
-    config = replace(
-        ruleset,
-        funded=None
-    )
-
-    result = config.validate_for_simulation(
-        SimulationMode.FUNDED_ONLY
-    )
-
-    assert "funded" in error_paths(result)
-
-
-def test_funded_only_ready(ruleset):
-
-    config = replace(
-        ruleset,
-        evaluation=None,
-        live=None
-    )
-
-    result = config.validate_for_simulation(
-        SimulationMode.FUNDED_ONLY
-    )
-
-    assert result.is_valid
-
-
-def test_missing_live_configuration(ruleset):
-
-    config = replace(
-        ruleset,
-        live=None
-    )
-
-    result = config.validate_for_simulation()
-
-    assert "live" in error_paths(result)
-
-
-def test_missing_live_transition(ruleset):
-
-    config = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            live_transition=None
-        )
-    )
-
-    result = config.validate_for_simulation()
-
-    assert (
-        "funded.live_transition"
-        in error_paths(result)
-    )
-
-
-def test_unresolved_live_balance(ruleset):
-
-    config = replace(
-        ruleset,
-        live=replace(
-            ruleset.live,
-            starting_balance=None
-        )
-    )
-
-    result = config.validate_for_simulation()
-
-    assert (
-        "live.starting_balance"
-        in error_paths(result)
-    )
-
-
-def test_manual_review_not_ready(ruleset):
-
-    config = replace(
-        ruleset,
-        funded=replace(
-            ruleset.funded,
-            live_transition=LiveTransitionRules(
-                transition_type=TransitionType.MANUAL_REVIEW
-            )
-        )
-    )
-
-    result = config.validate_for_simulation()
-
-    assert not result.is_valid
-
-    assert (
-        "funded.live_transition"
-        in error_paths(result)
-    )
-
-
-def test_invalid_simulation_mode(ruleset):
-
-    result = ruleset.validate_for_simulation(
-        "unknown"
-    )
-
-    assert "simulation.mode" in error_paths(result)
-
-
-# --------------------------------------------------
-# Multiple errors
-# --------------------------------------------------
-
-def test_collect_multiple_errors(ruleset):
-
-    invalid = replace(
-        ruleset,
-        account_name="",
-        account_size=-1000,
-        max_accounts=-1
-    )
-
-    result = invalid.validate()
-
-    assert len(result.errors) == 3
-
-    assert error_paths(result) == {
-        "account_name",
-        "account_size",
-        "max_accounts"
-    }
-
-
-def test_collect_nested_errors(ruleset):
-
-    invalid = replace(
-        ruleset,
-
-        evaluation=replace(
-            ruleset.evaluation,
-            profit_target=-1000
-        ),
-
-        funded=replace(
-            ruleset.funded,
-            payout=replace(
-                ruleset.funded.payout,
-                profit_split=1.5
-            )
-        )
-    )
-
-    result = invalid.validate()
-
-    assert error_paths(result) == {
-        "evaluation.profit_target",
-        "funded.payout.profit_split"
-    }
-
-
-def test_structural_error_prevents_typeerror(ruleset):
-
-    invalid = replace(
-        ruleset,
-        account_size="invalid",
-        max_accounts=-1
-    )
-
-    result = invalid.validate()
-
-    assert not result.is_valid
-    assert "account_size" in error_paths(result)
-
-
-def test_validation_does_not_modify_ruleset(ruleset):
-
-    original_size = ruleset.account_size
-    original_target = ruleset.evaluation.profit_target
-
-    ruleset.validate()
-    ruleset.validate_for_simulation()
-
-    assert ruleset.account_size == original_size
-
-    assert (
-        ruleset.evaluation.profit_target
-        == original_target
-    )
