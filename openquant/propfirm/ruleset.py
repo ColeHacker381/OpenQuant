@@ -15,6 +15,11 @@ class BalanceReference(str, Enum):
 class Ruleset:
     account_name: str
     account_size: int
+    evaluation: EvaluationRules | None = None
+    funded: FundedRules | None = None
+    live: LiveRules | None = None
+    max_accounts: int | None = None
+
 
 @dataclass(frozen=True)
 class DrawdownRules:
@@ -64,3 +69,70 @@ class TradingRules:
     allow_weekend: bool = False
     allow_news: bool = True
 
+@dataclass(frozen=True)
+class PayoutRules:
+    profit_split: float
+    minimum_amount: float
+    maximum_amount: float | None = None
+    minimum_profitable_days: int = 0
+    profitable_day_threshold: float = 0.0
+    minimum_trading_days: int = 0
+    minimum_balance_after_payout: float | None = None
+    minimum_days_between_payouts: int = 0
+    maximum_withdrawal_ratio: float | None = None
+    consistency: ConsistencyRules | None = None
+    maximum_total_payouts: float | None = None
+    maximum_payout_count: int | None = None
+
+class TransitionMode(str, Enum):
+    ALL = "all"
+    ANY = "any"
+
+class TransitionType(str, Enum):
+    AUTOMATIC = "automatic"
+    MANUAL_REVIEW = "manual_review"
+
+@dataclass(frozen=True)
+class LiveTransitionRules:
+    minimum_payout_count: int | None = None
+    minimum_total_payouts: float | None = None
+    minimum_trading_days: int | None = None
+    minimum_profit: float | None = None
+    mode: TransitionMode = TransitionMode.ALL
+    transition_type: TransitionType = TransitionType.AUTOMATIC
+
+@dataclass(frozen=True)
+class EvaluationRules:
+    profit_target: float
+    drawdown: DrawdownRules
+    fees: FeeRules
+    minimum_trading_days: int = 0
+    maximum_trading_days: int | None = None
+    maximum_calendar_days: int | None = None
+    daily_loss: DailyLossRules | None = None
+    consistency: ConsistencyRules | None = None
+    trading: TradingRules | None = None
+
+@dataclass(frozen=True)
+class FundedRules:
+    drawdown: DrawdownRules
+    fees: FeeRules
+    payout: PayoutRules
+    daily_loss: DailyLossRules | None = None
+    consistency: ConsistencyRules | None = None
+    trading: TradingRules | None = None
+    live_transition: LiveTransitionRules | None = None
+
+@dataclass(frozen=True)
+class LiveRules:
+    drawdown: DrawdownRules | None
+    fees: FeeRules
+    payout: PayoutRules
+    starting_balance: float | None = None
+    daily_loss: DailyLossRules | None = None
+    consistency: ConsistencyRules | None = None
+    trading: TradingRules | None = None
+
+
+
+    
