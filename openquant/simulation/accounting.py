@@ -133,6 +133,42 @@ def assert_accounting_invariants(
                 "Inactive session contains stale state"
             )
 
+    index = account.payout_cycle_start_index
+
+    if (
+        type(index) is not int
+        or not 0 <= index <= len(
+            account.session_history
+        )
+    ):
+
+        raise AccountingInvariantError(
+            "Invalid payout cycle index"
+        )
+
+    if (
+        account.lifetime_payout_count
+        != len(account.payout_history)
+    ):
+
+        raise AccountingInvariantError(
+            "Lifetime payout count mismatch"
+        )
+
+    if account.payout_count == 0:
+
+        if account.last_payout_timestamp is not None:
+
+            raise AccountingInvariantError(
+                "Unexpected payout timestamp"
+            )
+
+    elif account.last_payout_timestamp is None:
+
+        raise AccountingInvariantError(
+            "Missing payout timestamp"
+        )
+
 
 def start_session(
     account: AccountState,
@@ -293,3 +329,99 @@ def record_cash_flow(
         )
 
     account.cash_flows.append(flow)
+
+def audit_payout_accounting(
+    account: AccountState
+) -> None:
+
+    assert_accounting_invariants(account)
+
+    records = account.payout_history
+
+    gross_total = sum(
+        record.gross_amount_cents
+        for record in records
+    )
+
+    trader_total = sum(
+        record.trader_amount_cents
+        for record in records
+    )
+
+    cash_total = sum(
+        flow.amount_cents
+
+        for flow in account.cash_flows
+
+        if flow.type is CashFlowType.PAYOUT
+    )
+
+    if (
+        gross_total
+        != account.lifetime_gross_withdrawals_cents
+    ):
+
+        raise AccountingInvariantError(
+            "Lifetime gross payout total mismatch"
+        )
+
+    if trader_total != cash_total:
+
+        raise AccountingInvariantError(
+            "Payout history and cash ledger disagree"
+        )
+
+    stage_records = [
+        record
+
+        for record in records
+
+        if record.stage is account.stage
+    ]
+
+    if len(stage_records) != account.payout_count:
+
+        raise AccountingInvariantError(
+            "Stage payout count mismatch"
+        )
+
+    if sum(
+        record.gross_amount_cents
+        for record in stage_records
+    ) != account.gross_withdrawals_cents:
+
+        raise AccountingInvariantError(
+            "Stage withdrawal total mismatch"
+        )
+
+    if stage_records:
+
+        if (
+            account.last_payout_timestamp
+            != stage_records[-1].timestamp
+        ):
+
+            raise AccountingInvariantError(
+                "Last payout timestamp mismatch"
+            )
+
+    for record in records:
+
+        if (
+            record.balance_before_cents
+            - record.balance_after_cents
+            != record.gross_amount_cents
+        ):
+
+            raise AccountingInvariantError(
+                "Invalid payout balance adjustment"
+            )
+
+        if not (
+            0 <= record.trader_amount_cents
+            <= record.gross_amount_cents
+        ):
+
+            raise AccountingInvariantError(
+                "Invalid payout profit split"
+            )

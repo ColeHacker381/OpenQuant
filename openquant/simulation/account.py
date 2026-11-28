@@ -118,6 +118,28 @@ class CashFlow:
                 "Revenue cash flows must be nonnegative"
             )
 
+@dataclass(frozen=True)
+class PayoutRecord:
+
+    timestamp: datetime
+
+    stage: AccountStage
+
+    gross_amount_cents: int
+
+    trader_amount_cents: int
+
+    balance_before_cents: int
+
+    balance_after_cents: int
+
+    @property
+    def firm_amount_cents(self) -> int:
+
+        return (
+            self.gross_amount_cents
+            - self.trader_amount_cents
+        )
 
 @dataclass
 class AccountState:
@@ -191,6 +213,16 @@ class AccountState:
     evaluation_started_at: datetime | None = None
 
     evaluation_completed_at: datetime | None = None
+
+    # Payout cycle state
+
+    payout_cycle_start_index: int = 0
+
+    last_payout_timestamp: datetime | None = None
+
+    payout_history: list[PayoutRecord] = field(
+        default_factory=list
+    )
 
     @property
     def account_id(self) -> str:
@@ -487,7 +519,32 @@ class AccountState:
 
         return min(distances)
 
-    
+    @property
+    def payout_cycle_sessions(
+        self
+    ) -> tuple[SessionRecord, ...]:
+
+        return tuple(
+            self.session_history[
+                self.payout_cycle_start_index:
+            ]
+        )
+
+    @property
+    def payout_cycle_profit_cents(self) -> int:
+
+        return sum(
+            record.net_trading_pnl_cents
+            for record in self.payout_cycle_sessions
+        )
+
+    @property
+    def lifetime_trader_payouts_cents(self) -> int:
+
+        return sum(
+            record.trader_amount_cents
+            for record in self.payout_history
+        )
 
 class AccountCreationError(ValueError):
     pass

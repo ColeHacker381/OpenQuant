@@ -152,6 +152,7 @@ class TradeRealized(AccountEvent):
 class PayoutRequested(AccountEvent):
 
     amount_cents: int
+    positions_flat: bool | None = None
 
     def __post_init__(self):
 
@@ -162,6 +163,15 @@ class PayoutRequested(AccountEvent):
             "Payout amount",
             minimum=1
         )
+
+        if (
+            self.positions_flat is not None
+            and type(self.positions_flat) is not bool
+        ):
+
+            raise TypeError(
+                "positions_flat must be boolean or None"
+            )
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,19 @@
 from .account import AccountState
 from collections.abc import Iterable
 
+from .events import PayoutRequested
+
+from .account import PayoutRecord
+
+from .payout import (
+    PayoutDecision,
+    PayoutRejectedError,
+    PayoutRejectionReason,
+    compile_payout,
+    assess_payout,
+    process_payout
+)
+
 from .enums import AccountStage
 
 from .evaluation import (
@@ -169,6 +182,23 @@ class AccountEngine:
                 self.account.stage_rules
             )
 
+        self.payout = None
+
+        self.last_payout: PayoutRecord | None = None
+
+        if self.account.stage in (
+            AccountStage.FUNDED,
+            AccountStage.LIVE
+        ):
+
+            self.payout = compile_payout(
+                self.account.stage_rules.payout
+            )
+
+            self._handlers[PayoutRequested] = (
+                self._process_payout
+            )
+
     def _validate_event(
         self,
         event: AccountEvent
@@ -221,7 +251,13 @@ class AccountEngine:
                 self.account
             )
 
-            if self.drawdown is not None:
+            if (
+                self.drawdown is not None
+                and not isinstance(
+                    event,
+                    PayoutRequested
+                )
+            ):
 
                 assert_drawdown_invariants(
                     self.account,
@@ -237,7 +273,10 @@ class AccountEngine:
                 event
             )
 
-        except AccountingError as exc:
+        except (
+            AccountingError,
+            PayoutRejectedError
+        ) as exc:
 
             raise EventProcessingError(
                 str(exc)
@@ -352,3 +391,37 @@ class AccountEngine:
             self.account,
             self.evaluation
         )
+
+    def _process_payout(
+        self,
+        account: AccountState,
+        event: PayoutRequested
+    ) -> None:
+
+        self.last_payout = process_payout(
+            account,
+            self.payout,
+            event
+        )
+
+    def assess_payout(
+        self,
+        event: PayoutRequested
+    ) -> PayoutDecision:
+
+        if self.payout is None:
+
+            return PayoutDecision(
+                maximum_withdrawal_cents=0,
+
+                reasons=(
+                    PayoutRejectionReason.INVALID_STAGE,
+                )
+            )
+
+        return assess_payout(
+            self.account,
+            self.payout,
+            event
+        )
+
