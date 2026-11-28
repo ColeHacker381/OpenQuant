@@ -293,6 +293,66 @@ class AccountState:
             f"Equity: {format_money(self.equity_cents)}"
         )
 
+    @property
+    def completed_sessions(self) -> int:
+
+        return len(self.session_history)
+
+
+    @property
+    def trading_days(self) -> int:
+
+        return sum(
+            record.was_traded
+
+            for record in self.session_history
+        )
+
+
+    @property
+    def profitable_days(self) -> int:
+
+        return sum(
+            record.was_profitable
+
+            for record in self.session_history
+        )
+
+
+    @property
+    def best_day_pnl_cents(self) -> int:
+
+        return max(
+            (
+                record.net_trading_pnl_cents
+
+                for record in self.session_history
+
+                if record.net_trading_pnl_cents > 0
+            ),
+
+            default=0
+        )
+
+
+    @property
+    def gross_realized_pnl_cents(self) -> int:
+
+        return (
+            self.realized_pnl_cents
+            + self.commissions_cents
+        )
+
+
+    @property
+    def completed_session_pnl_cents(self) -> int:
+
+        return sum(
+            record.net_trading_pnl_cents
+
+            for record in self.session_history
+        )
+
 class AccountCreationError(ValueError):
     pass
 
@@ -398,3 +458,4 @@ def create_account(
         starting_balance_cents=starting_balance,
         balance_cents=starting_balance
     )
+
