@@ -5,6 +5,10 @@ from ..core.serialization import (
     DeserializationError
 )
 
+from ..propfirm.versioned_database import (
+    VersionedFirmDatabase
+)
+
 from ..propfirm.prop_firm import PropFirm
 
 from ..propfirm.database import (
@@ -59,6 +63,16 @@ class OpenQuantCLI:
                 PropFirm,
                 title="Prop Firm Configuration"
             )
+
+            if data["ruleset"]["rules_verified"]:
+
+                self.output(
+                    "New firms are saved as unverified drafts. "
+                    "Source documentation must be added before "
+                    "verification."
+                )
+
+            data["ruleset"]["rules_verified"] = False
 
             firm = PropFirm.from_dict(data)
             firm_id = generate_firm_id(firm)
