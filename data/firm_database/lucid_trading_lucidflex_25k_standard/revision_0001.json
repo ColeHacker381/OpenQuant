@@ -1,0 +1,107 @@
+{
+    "firm": {
+        "name": "Lucid Trading",
+        "ruleset": {
+            "account_name": "LucidFlex 25K Standard",
+            "account_size": 25000,
+            "evaluation": {
+                "profit_target": 1250,
+                "drawdown": {
+                    "type": "trailing_eod",
+                    "amount": 1000,
+                    "trailing_stop_balance": null,
+                    "reference": "balance",
+                    "breach_reference": "equity",
+                    "breach_on_equal": true
+                },
+                "fees": {
+                    "purchase": 0.0,
+                    "activation": 0.0,
+                    "recurring": 0.0,
+                    "recurring_interval_days": null,
+                    "reset": null
+                },
+                "minimum_trading_days": 3,
+                "maximum_trading_days": null,
+                "maximum_calendar_days": null,
+                "daily_loss": null,
+                "consistency": {
+                    "maximum_ratio": 0.4,
+                    "window": "current_stage"
+                },
+                "trading": {
+                    "max_mini_contracts": 2,
+                    "max_micro_contracts": 20,
+                    "allow_overnight": false,
+                    "allow_weekend": false,
+                    "allow_news": true
+                }
+            },
+            "funded": null,
+            "live": null,
+            "max_accounts": null,
+            "rules_verified": false
+        }
+    },
+    "metadata": {
+        "schema_version": 1,
+        "revision": 1,
+        "effective_date": null,
+        "verified_date": null,
+        "sources": [
+            {
+                "title": "LucidFlex Evaluation Account",
+                "url": "https://support.lucidtrading.com/en/articles/12945790-lucidflex-evaluation-account",
+                "accessed_date": "2026-11-27"
+            },
+            {
+                "title": "LucidFlex Funded Account",
+                "url": "https://support.lucidtrading.com/en/articles/12945795-lucidflex-funded-account",
+                "accessed_date": "2026-11-27"
+            },
+            {
+                "title": "LucidFlex Consistency Percentage",
+                "url": "https://support.lucidtrading.com/en/articles/12945805-lucidflex-consistency-percentage",
+                "accessed_date": "2026-11-27"
+            }
+        ],
+        "unresolved_rules": [
+            {
+                "path": "evaluation.fees.purchase",
+                "reason": "unknown",
+                "description": "Confirm checkout price."
+            },
+            {
+                "path": "evaluation.drawdown",
+                "reason": "unknown",
+                "description": "Confirm exact trailing cap and breach semantics."
+            },
+            {
+                "path": "evaluation.trading",
+                "reason": "unknown",
+                "description": "Confirm session restrictions, news restrictions and inactivity rules."
+            },
+            {
+                "path": "funded",
+                "reason": "unknown",
+                "description": "Complete funded payout and eligibility requirements."
+            },
+            {
+                "path": "funded.trading.scaling",
+                "reason": "unsupported",
+                "description": "Funded contract scaling requires additional ruleset functionality."
+            },
+            {
+                "path": "live",
+                "reason": "unknown",
+                "description": "Confirm live account policies and transition requirements."
+            },
+            {
+                "path": "max_accounts",
+                "reason": "unknown",
+                "description": "Confirm account ownership and activation limits."
+            }
+        ],
+        "notes": "Initial research draft. Standard 40% evaluation consistency. Checkout options must be confirmed. Placeholder defaults are not verified firm policies."
+    }
+}

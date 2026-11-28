@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from .revision_cli import RevisionCLI
 
 from ..core.serialization import (
     SerializationError,
@@ -40,6 +41,17 @@ class OpenQuantCLI:
             input_fn=input_fn,
             output_fn=output_fn
         )
+        self.revision_cli = None
+
+        if isinstance(
+            database,
+            VersionedFirmDatabase
+        ):
+
+            self.revision_cli = RevisionCLI(
+                database,
+                self.wizard
+            )
 
 
     def add_firm(self):
@@ -232,28 +244,55 @@ class OpenQuantCLI:
             "Firm ID: "
         )
 
+        if self.revision_cli is not None:
+
+            record = self.database.get_revision(
+                firm_id
+            )
+
+            self.output(
+                "\nCONFIGURATION VALIDATION"
+            )
+
+            self.output(
+                str(record.validate())
+            )
+
+            self.output(
+                "\nHYPOTHETICAL LIFECYCLE READINESS"
+            )
+
+            self.output(
+                str(
+                    record.validate_for_simulation(
+                        require_verified=False
+                    )
+                )
+            )
+
+            self.output(
+                "\nVERIFIED LIFECYCLE READINESS"
+            )
+
+            self.output(
+                str(
+                    record.validate_for_simulation(
+                        require_verified=True
+                    )
+                )
+            )
+
+            return
+
+        # Legacy database compatibility
         firm = self.database.get(firm_id)
 
-        self.output(
-            "\nCONFIGURATION VALIDATION"
-        )
-
-        self.output(
-            str(firm.validate())
-        )
-
-        self.output(
-            "\nFULL LIFECYCLE READINESS"
-        )
+        self.output(str(firm.validate()))
 
         self.output(
             str(
                 firm.ruleset.validate_for_simulation()
             )
-        )
-
-        self.output(
-            "\nVERIFIED LIFECYCLE READINESS"
         )
 
         self.output(
@@ -263,7 +302,6 @@ class OpenQuantCLI:
                 )
             )
         )
-
 
     def display_menu(self):
 
@@ -284,6 +322,14 @@ class OpenQuantCLI:
         self.output("3. Search prop firms")
         self.output("4. Inspect prop firm")
         self.output("5. Validate prop firm")
+
+        if self.revision_cli is not None:
+
+            self.output("6. Revision history")
+            self.output("7. Inspect revision")
+            self.output("8. Edit ruleset")
+            self.output("9. Sources and verification")
+
         self.output("0. Exit")
 
 
@@ -296,6 +342,18 @@ class OpenQuantCLI:
             "4": self.inspect_firm,
             "5": self.validate_firm
         }
+
+        if self.revision_cli is not None:
+
+            actions.update({
+                "6": self.revision_cli.show_history,
+
+                "7": self.revision_cli.inspect_revision,
+
+                "8": self.revision_cli.edit_revision,
+
+                "9": self.revision_cli.verify_revision
+            })
 
         while True:
 

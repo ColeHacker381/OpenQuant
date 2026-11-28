@@ -368,7 +368,19 @@ class FirmRevision:
         result.warnings.extend(readiness.warnings)
 
         if self.metadata.unresolved_rules:
-            if require_verified:
+            unsupported = [
+                rule
+                for rule in self.metadata.unresolved_rules
+                if rule.reason is UnresolvedReason.UNSUPPORTED
+            ]
+
+            if unsupported:
+                result.add_error(
+                    "metadata.unresolved_rules",
+                    "Unsupported rule behavior prevents simulation"
+                )
+
+            elif require_verified:
                 result.add_error(
                     "metadata.unresolved_rules",
                     "Unresolved rules prevent verified simulation"
