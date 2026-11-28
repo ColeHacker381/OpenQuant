@@ -27,3 +27,7 @@ class CashFlowType(str, Enum):
     PAYOUT = "payout"
     REFUND = "refund"
 
+class EvaluationOutcome(str, Enum):
+    IN_PROGRESS = "in_progress"
+    PASSED = "passed"
+    FAILED = "failed"

@@ -1,12 +1,27 @@
 from .account import AccountState
 from collections.abc import Iterable
 
+from .enums import AccountStage
+
+from .evaluation import (
+    EvaluationProgress,
+    compile_evaluation,
+    get_evaluation_progress,
+    process_evaluation
+)
+
 from .events import (
     AccountEvent,
     SessionStarted,
     SessionEnded,
     EquityUpdated,
     TradeRealized
+)
+
+from .daily_loss import (
+    DailyLossBreach,
+    compile_daily_loss,
+    process_daily_loss
 )
 
 from .accounting import (
@@ -28,6 +43,11 @@ from .drawdown import (
     assert_drawdown_invariants
 )
 
+from .trading import (
+    TradingRequest,
+    TradingDecision,
+    authorize_trade
+)
 
 class EventProcessingError(ValueError):
     pass
@@ -127,6 +147,28 @@ class AccountEngine:
                 "Unexpected drawdown state"
             )
 
+        self.daily_loss = None
+
+        self.last_daily_loss_breach: DailyLossBreach | None = None
+
+        daily_loss_rules = (
+            self.account.stage_rules.daily_loss
+        )
+
+        if daily_loss_rules is not None:
+
+            self.daily_loss = compile_daily_loss(
+                daily_loss_rules
+            )
+
+        self.evaluation = None
+
+        if self.account.stage is AccountStage.EVALUATION:
+
+            self.evaluation = compile_evaluation(
+                self.account.stage_rules
+            )
+
     def _validate_event(
         self,
         event: AccountEvent
@@ -215,6 +257,22 @@ class AccountEngine:
 
                 self.last_drawdown_breach = breach
 
+        # Permanent drawdown takes precedence.
+        if (
+            self.account.is_active
+            and self.daily_loss is not None
+        ):
+
+            breach = process_daily_loss(
+                self.account,
+                self.daily_loss,
+                event
+            )
+
+            if breach is not None:
+
+                self.last_daily_loss_breach = breach
+
         if self.strict:
 
             assert_accounting_invariants(
@@ -233,6 +291,15 @@ class AccountEngine:
         )
 
         self.processed_event_count += 1
+
+        # Evaluation success, failure and expiration.
+        if self.evaluation is not None:
+
+            process_evaluation(
+                self.account,
+                self.evaluation,
+                event
+            )
 
 
     def process_all(
@@ -257,3 +324,31 @@ class AccountEngine:
                 break
 
         return processed
+
+    def authorize_trade(
+        self,
+        request: TradingRequest
+    ) -> TradingDecision:
+
+        return authorize_trade(
+            self.account,
+            request
+        )
+
+    @property
+    def evaluation_progress(
+        self
+    ) -> EvaluationProgress | None:
+
+        if (
+            self.evaluation is None
+            or self.account.stage
+            is not AccountStage.EVALUATION
+        ):
+
+            return None
+
+        return get_evaluation_progress(
+            self.account,
+            self.evaluation
+        )

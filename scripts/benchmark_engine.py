@@ -9,7 +9,9 @@ from openquant.propfirm.ruleset import (
     EvaluationRules,
     DrawdownRules,
     DrawdownType,
-    FeeRules
+    FeeRules,
+    DailyLossRules,
+    BreachAction,
 )
 
 from openquant.propfirm.revision import (
@@ -36,7 +38,9 @@ REPETITIONS = 5
 
 
 def build_revision(
-    drawdown_type=DrawdownType.STATIC
+    drawdown_type=DrawdownType.STATIC,
+    *,
+    enable_daily_loss=False
 ):
 
     return FirmRevision(
@@ -49,11 +53,23 @@ def build_revision(
 
                 evaluation=EvaluationRules(
                     profit_target=1500,
+                    daily_loss=(
+                        DailyLossRules(
+                            amount=500,
 
-                drawdown=DrawdownRules(
-                    drawdown_type,
-                    1000
-                ),
+                            action=(
+                                BreachAction.LOCK_SESSION
+                            )
+                        )
+
+                        if enable_daily_loss
+                        else None
+                    ),
+
+                    drawdown=DrawdownRules(
+                        drawdown_type,
+                        1000
+                    ),
 
                     fees=FeeRules()
                 )
@@ -162,28 +178,37 @@ def main():
 
     for drawdown_type in DrawdownType:
 
-        revision = build_revision(
-            drawdown_type
-        )
+        for enable_daily_loss in (False, True):
 
-        print("=" * 50)
+            revision = build_revision(
+                drawdown_type,
 
-        print(
-            f"Drawdown type: "
-            f"{drawdown_type.value}"
-        )
+                enable_daily_loss=enable_daily_loss
+            )
 
-        benchmark(
-            revision,
-            events,
-            strict=False
-        )
+            print("=" * 50)
 
-        benchmark(
-            revision,
-            events,
-            strict=True
-        )
+            print(
+                f"Drawdown type: "
+                f"{drawdown_type.value}"
+            )
 
+            print(
+                f"Daily loss enabled: "
+                f"{enable_daily_loss}"
+            )
+
+            benchmark(
+                revision,
+                events,
+                strict=False
+            )
+
+            benchmark(
+                revision,
+                events,
+                strict=True
+            )
+            
 if __name__ == "__main__":
     main()

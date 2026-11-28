@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .enums import EvaluationOutcome
 from ..propfirm.revision import FirmRevision
 
 from ..propfirm.ruleset import (
@@ -182,6 +183,14 @@ class AccountState:
     cash_flows: list[CashFlow] = field(
         default_factory=list
     )
+
+    # Evaluation lifecycle
+
+    evaluation_outcome: EvaluationOutcome | None = None
+
+    evaluation_started_at: datetime | None = None
+
+    evaluation_completed_at: datetime | None = None
 
     @property
     def account_id(self) -> str:
@@ -405,7 +414,80 @@ class AccountState:
             - self.drawdown_reference_cents
         )
 
+    @property
+    def daily_loss_floor_cents(self) -> int | None:
 
+        rules = self.stage_rules.daily_loss
+
+        if rules is None or not self.has_active_session:
+
+            return None
+
+        from ..propfirm.ruleset import BalanceReference
+
+        if rules.reference is BalanceReference.BALANCE:
+
+            start = self.session_start_balance_cents
+
+        elif rules.reference is BalanceReference.EQUITY:
+
+            start = self.session_start_equity_cents
+
+        else:
+
+            raise RuntimeError(
+                "Invalid daily loss reference"
+            )
+
+        return start - dollars_to_cents(
+            rules.amount
+        )
+
+
+    @property
+    def remaining_daily_loss_cents(self) -> int | None:
+
+        floor = self.daily_loss_floor_cents
+
+        if floor is None:
+
+            return None
+
+        from ..propfirm.ruleset import BalanceReference
+
+        reference = self.stage_rules.daily_loss.reference
+
+        if reference is BalanceReference.BALANCE:
+
+            current = self.balance_cents
+
+        else:
+
+            current = self.equity_cents
+
+        return current - floor
+
+    @property
+    def effective_loss_distance_cents(self) -> int | None:
+
+        distances = [
+            value
+
+            for value in (
+                self.remaining_drawdown_cents,
+                self.remaining_daily_loss_cents
+            )
+
+            if value is not None
+        ]
+
+        if not distances:
+
+            return None
+
+        return min(distances)
+
+    
 
 class AccountCreationError(ValueError):
     pass
@@ -510,6 +592,12 @@ def create_account(
         stage=stage,
         status=AccountStatus.ACTIVE,
         starting_balance_cents=starting_balance,
-        balance_cents=starting_balance
+        balance_cents=starting_balance,
+
+        evaluation_outcome=(
+            EvaluationOutcome.IN_PROGRESS
+            if stage is AccountStage.EVALUATION
+            else None
+        )
     )
 
