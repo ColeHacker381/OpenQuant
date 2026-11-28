@@ -654,16 +654,21 @@ def validate_ruleset(
 
 def validate_simulation_readiness(
     ruleset: Ruleset,
-    mode: SimulationMode = SimulationMode.FULL_LIFECYCLE
+    mode: SimulationMode = SimulationMode.FULL_LIFECYCLE,
+    *,
+    require_verified: bool = False
 ) -> ValidationResult:
 
     result = validate_ruleset(ruleset)
-
+    if require_verified and not ruleset.rules_verified:
+        result.add_error(
+            "rules_verified",
+            "Ruleset has not been verified"
+        )
     if not result.is_valid:
         return result
 
     if not isinstance(mode, SimulationMode):
-
         result.add_error(
             "simulation.mode",
             "Invalid simulation mode"
@@ -672,16 +677,13 @@ def validate_simulation_readiness(
         return result
 
     if mode is SimulationMode.EVALUATION_ONLY:
-
         if ruleset.evaluation is None:
-
             result.add_error(
                 "evaluation",
                 "Evaluation configuration is required"
             )
 
     elif mode is SimulationMode.FUNDED_ONLY:
-
         if ruleset.funded is None:
 
             result.add_error(
@@ -690,7 +692,6 @@ def validate_simulation_readiness(
             )
 
     elif mode is SimulationMode.FULL_LIFECYCLE:
-
         if (
             ruleset.evaluation is None
             and ruleset.funded is None
@@ -713,9 +714,7 @@ def validate_simulation_readiness(
             )
 
         if ruleset.funded is not None:
-
             transition = ruleset.funded.live_transition
-
             if transition is not None:
 
                 if ruleset.live is None:
@@ -736,14 +735,12 @@ def validate_simulation_readiness(
                     )
 
             elif ruleset.live is not None:
-
                 result.add_error(
                     "funded.live_transition",
                     "Transition conditions are required to reach live"
                 )
 
         if ruleset.live is not None:
-
             if ruleset.live.starting_balance is None:
 
                 result.add_error(

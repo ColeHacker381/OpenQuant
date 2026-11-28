@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 class DrawdownType(str, Enum):
@@ -20,12 +20,28 @@ class Ruleset:
     live: LiveRules | None = None
     max_accounts: int | None = None
 
+    rules_verified: bool = field(
+        default=False,
+        metadata={
+            "label": "Rules Verified",
+            "description": (
+                "Have all applicable rules and assumptions "
+                "been checked against official documentation?"
+            )
+        }
+    )
+
     def validate(self):
 
         from .validation import validate_ruleset
         return validate_ruleset(self)
 
-    def validate_for_simulation(self, mode=None):
+    def validate_for_simulation(
+        self,
+        mode=None,
+        *,
+        require_verified: bool = False
+    ):
 
         from .validation import (
             SimulationMode,
@@ -37,19 +53,73 @@ class Ruleset:
 
         return validate_simulation_readiness(
             self,
-            mode
+            mode,
+            require_verified=require_verified
         )
 
 
 @dataclass(frozen=True)
 class DrawdownRules:
-    type: DrawdownType
-    amount: float
 
-    trailing_stop_balance: float | None = None
-    reference: BalanceReference = BalanceReference.BALANCE
-    breach_reference: BalanceReference = BalanceReference.EQUITY
-    breach_on_equal: bool = True
+    type: DrawdownType = field(
+        metadata={
+            "label": "Drawdown Type",
+            "description": (
+                "Determines when the drawdown "
+                "threshold is updated."
+            )
+        }
+    )
+
+    amount: float = field(
+        metadata={
+            "label": "Drawdown Amount ($)",
+            "description": (
+                "Maximum permitted drawdown in USD."
+            )
+        }
+    )
+
+    trailing_stop_balance: float | None = field(
+        default=None,
+        metadata={
+            "description": (
+                "Absolute account balance threshold "
+                "at which the drawdown stops trailing."
+            )
+        }
+    )
+
+    reference: BalanceReference = field(
+        default=BalanceReference.BALANCE,
+        metadata={
+            "label": "High-Water Mark Reference",
+            "description": (
+                "Account value used when updating "
+                "the trailing high-water mark."
+            )
+        }
+    )
+
+    breach_reference: BalanceReference = field(
+        default=BalanceReference.EQUITY,
+        metadata={
+            "description": (
+                "Account value checked against the "
+                "drawdown termination threshold."
+            )
+        }
+    )
+
+    breach_on_equal: bool = field(
+        default=True,
+        metadata={
+            "description": (
+                "Whether touching the drawdown "
+                "threshold constitutes a breach."
+            )
+        }
+    )
 
 @dataclass
 class FeeRules:
@@ -103,6 +173,25 @@ class PayoutRules:
     consistency: ConsistencyRules | None = None
     maximum_total_payouts: float | None = None
     maximum_payout_count: int | None = None
+
+    profit_split: float = field(
+        metadata={
+            "description": (
+                "Fraction of gross withdrawal received "
+                "by the trader. Enter 0.90 for 90%."
+            )
+        }
+    )
+
+    minimum_amount: float = field(
+        metadata={
+            "label": "Minimum Gross Payout ($)",
+            "description": (
+                "Minimum withdrawal before applying "
+                "the trader's profit split."
+            )
+        }
+    )
 
 class TransitionMode(str, Enum):
     ALL = "all"
