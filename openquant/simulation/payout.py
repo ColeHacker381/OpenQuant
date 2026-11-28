@@ -302,25 +302,7 @@ def check_payout_consistency(
 
     elif rules.window is ConsistencyWindow.ACCOUNT_LIFETIME:
 
-        # Cross-stage session history is not
-        # implemented until Milestone 2.6.
-
-        if account.evaluation_outcome is not None:
-
-            raise PayoutConfigurationError(
-                "Lifetime consistency across stages "
-                "is not yet supported"
-            )
-
-        if account.stage is AccountStage.LIVE:
-
-            raise PayoutConfigurationError(
-                "Live lifetime consistency "
-                "requires stage-history support"
-            )
-
-        sessions = account.session_history
-
+        sessions = account.lifetime_session_history
     else:
 
         raise PayoutConfigurationError(
@@ -725,4 +707,3 @@ def process_payout(
     )
 
     return record
-

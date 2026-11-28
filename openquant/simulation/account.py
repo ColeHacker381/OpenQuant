@@ -141,6 +141,55 @@ class PayoutRecord:
             - self.trader_amount_cents
         )
 
+@dataclass(frozen=True)
+class StageRecord:
+
+    stage: AccountStage
+
+    status: AccountStatus
+
+    started_at: datetime | None
+
+    ended_at: datetime
+
+    starting_balance_cents: int
+
+    ending_balance_cents: int
+
+    ending_equity_cents: int
+
+    realized_pnl_cents: int
+
+    commissions_cents: int
+
+    trade_count: int
+
+    payout_count: int
+
+    gross_withdrawals_cents: int
+
+    termination_reason: TerminationReason | None
+
+    evaluation_outcome: EvaluationOutcome | None
+
+    sessions: tuple[SessionRecord, ...]
+
+    @property
+    def trading_days(self) -> int:
+
+        return sum(
+            record.was_traded
+            for record in self.sessions
+        )
+
+    @property
+    def profitable_days(self) -> int:
+
+        return sum(
+            record.was_profitable
+            for record in self.sessions
+        )
+
 @dataclass
 class AccountState:
 
@@ -221,6 +270,20 @@ class AccountState:
     last_payout_timestamp: datetime | None = None
 
     payout_history: list[PayoutRecord] = field(
+        default_factory=list
+    )
+
+    # Account lifecycle state
+
+    purchased_at: datetime | None = None
+
+    stage_started_at: datetime | None = None
+
+    last_billing_timestamp: datetime | None = None
+
+    reset_count: int = 0
+
+    stage_history: list[StageRecord] = field(
         default_factory=list
     )
 
@@ -545,6 +608,58 @@ class AccountState:
             record.trader_amount_cents
             for record in self.payout_history
         )
+
+    @property
+    def lifetime_realized_pnl_cents(self) -> int:
+
+        return (
+            self.realized_pnl_cents
+
+            + sum(
+                record.realized_pnl_cents
+                for record in self.stage_history
+            )
+        )
+
+
+    @property
+    def lifetime_commissions_cents(self) -> int:
+
+        return (
+            self.commissions_cents
+
+            + sum(
+                record.commissions_cents
+                for record in self.stage_history
+            )
+        )
+
+
+    @property
+    def lifetime_trade_count(self) -> int:
+
+        return (
+            self.trade_count
+
+            + sum(
+                record.trade_count
+                for record in self.stage_history
+            )
+        )
+
+
+    @property
+    def lifetime_session_history(
+        self
+    ) -> tuple[SessionRecord, ...]:
+
+        return tuple(
+            session
+
+            for stage in self.stage_history
+
+            for session in stage.sessions
+        ) + tuple(self.session_history)
 
 class AccountCreationError(ValueError):
     pass
