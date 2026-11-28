@@ -18,6 +18,16 @@ from .accounting import (
     realize_trade
 )
 
+from .drawdown import (
+    DrawdownBreach,
+    DrawdownConfigurationError,
+    DrawdownInvariantError,
+    compile_drawdown,
+    initialize_drawdown,
+    process_drawdown,
+    assert_drawdown_invariants
+)
+
 
 class EventProcessingError(ValueError):
     pass
@@ -75,6 +85,48 @@ class AccountEngine:
             self.account
         )
 
+        self.drawdown = None
+
+        self.last_drawdown_breach: DrawdownBreach | None = None
+
+        rules = self.account.stage_rules.drawdown
+
+        if rules is not None:
+
+            self.drawdown = compile_drawdown(
+                rules
+            )
+
+            if (
+                self.account.high_water_mark_cents is None
+                and self.account.drawdown_floor_cents is None
+            ):
+
+                if self.account.last_event_timestamp is not None:
+
+                    raise DrawdownInvariantError(
+                        "Existing account has no drawdown history"
+                    )
+
+                initialize_drawdown(
+                    self.account,
+                    self.drawdown
+                )
+
+            assert_drawdown_invariants(
+                self.account,
+                self.drawdown
+            )
+
+        elif (
+            self.account.high_water_mark_cents is not None
+            or self.account.drawdown_floor_cents is not None
+        ):
+
+            raise DrawdownInvariantError(
+                "Unexpected drawdown state"
+            )
+
     def _validate_event(
         self,
         event: AccountEvent
@@ -127,6 +179,13 @@ class AccountEngine:
                 self.account
             )
 
+            if self.drawdown is not None:
+
+                assert_drawdown_invariants(
+                    self.account,
+                    self.drawdown
+                )
+
         handler = self._handlers[type(event)]
 
         try:
@@ -142,17 +201,39 @@ class AccountEngine:
                 str(exc)
             ) from exc
 
+        # Apply the drawdown rules after the
+        # financial effects of the event.
+        if self.drawdown is not None:
+
+            breach = process_drawdown(
+                self.account,
+                self.drawdown,
+                event
+            )
+
+            if breach is not None:
+
+                self.last_drawdown_breach = breach
+
         if self.strict:
 
             assert_accounting_invariants(
                 self.account
             )
 
+            if self.drawdown is not None:
+
+                assert_drawdown_invariants(
+                    self.account,
+                    self.drawdown
+                )
+
         self.account.last_event_timestamp = (
             event.timestamp
         )
 
         self.processed_event_count += 1
+
 
     def process_all(
         self,
@@ -161,11 +242,18 @@ class AccountEngine:
 
         processed = 0
 
+        if not self.account.is_active:
+
+            return processed
+
         for event in events:
 
             self.process(event)
 
             processed += 1
 
-        return processed
+            if not self.account.is_active:
 
+                break
+
+        return processed

@@ -353,6 +353,60 @@ class AccountState:
             for record in self.session_history
         )
 
+    @property
+    def drawdown_reference_cents(self) -> int:
+
+        from ..propfirm.ruleset import BalanceReference
+
+        rules = self.stage_rules.drawdown
+
+        if rules is None:
+
+            raise RuntimeError(
+                "Account has no configured drawdown"
+            )
+
+        if rules.breach_reference is BalanceReference.BALANCE:
+
+            return self.balance_cents
+
+        if rules.breach_reference is BalanceReference.EQUITY:
+
+            return self.equity_cents
+
+        raise RuntimeError(
+            "Invalid drawdown reference"
+        )
+
+
+    @property
+    def remaining_drawdown_cents(self) -> int | None:
+
+        if self.drawdown_floor_cents is None:
+
+            return None
+
+        return (
+            self.drawdown_reference_cents
+            - self.drawdown_floor_cents
+        )
+
+
+    @property
+    def current_drawdown_cents(self) -> int | None:
+
+        if self.high_water_mark_cents is None:
+
+            return None
+
+        return max(
+            0,
+            self.high_water_mark_cents
+            - self.drawdown_reference_cents
+        )
+
+
+
 class AccountCreationError(ValueError):
     pass
 

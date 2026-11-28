@@ -812,7 +812,7 @@ def test_locked_session_accepts_existing_fill(
     assert active_engine.account.session_locked
 
 
-def test_loss_recorded_without_drawdown_enforcement(
+def test_loss_recorded_before_drawdown_termination(
     active_engine,
     timestamp
 ):
@@ -826,11 +826,16 @@ def test_loss_recorded_without_drawdown_enforcement(
 
     account = active_engine.account
 
+    # The financial loss must remain recorded.
     assert account.balance_cents == 2_350_000
 
-    # Drawdown enforcement begins in 2.2.
-    assert account.is_active
+    assert account.realized_pnl_cents == -150_000
 
+    assert not account.is_active
+
+    assert account.status is AccountStatus.TERMINATED
+
+    assert active_engine.processed_event_count == 2
 
 # ==================================================
 # Session completion

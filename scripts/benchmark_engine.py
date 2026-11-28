@@ -35,7 +35,9 @@ TRADE_COUNT = 100_000
 REPETITIONS = 5
 
 
-def build_revision():
+def build_revision(
+    drawdown_type=DrawdownType.STATIC
+):
 
     return FirmRevision(
         firm=PropFirm(
@@ -48,10 +50,10 @@ def build_revision():
                 evaluation=EvaluationRules(
                     profit_target=1500,
 
-                    drawdown=DrawdownRules(
-                        DrawdownType.STATIC,
-                        1000
-                    ),
+                drawdown=DrawdownRules(
+                    drawdown_type,
+                    1000
+                ),
 
                     fees=FeeRules()
                 )
@@ -79,9 +81,9 @@ def build_events():
     for index in range(TRADE_COUNT):
 
         pnl = (
-            1000
+            1100
             if index % 2 == 0
-            else -1000
+            else -900
         )
 
         events.append(
@@ -139,14 +141,9 @@ def benchmark(revision, events, strict):
 
         runtimes.append(elapsed)
 
-        assert account.trade_count == TRADE_COUNT
+        assert account.realized_pnl_cents == 0
 
-        assert engine.processed_event_count == len(events)
-
-        assert (
-            account.realized_pnl_cents
-            == -TRADE_COUNT * 100
-        )
+        assert account.is_active
 
     runtime = median(runtimes)
 
@@ -159,25 +156,34 @@ def benchmark(revision, events, strict):
     print(f"Throughput: {throughput:,.0f} events/s")
     print()
 
-
 def main():
-
-    revision = build_revision()
 
     events = build_events()
 
-    benchmark(
-        revision,
-        events,
-        strict=False
-    )
+    for drawdown_type in DrawdownType:
 
-    benchmark(
-        revision,
-        events,
-        strict=True
-    )
+        revision = build_revision(
+            drawdown_type
+        )
 
+        print("=" * 50)
+
+        print(
+            f"Drawdown type: "
+            f"{drawdown_type.value}"
+        )
+
+        benchmark(
+            revision,
+            events,
+            strict=False
+        )
+
+        benchmark(
+            revision,
+            events,
+            strict=True
+        )
 
 if __name__ == "__main__":
     main()
